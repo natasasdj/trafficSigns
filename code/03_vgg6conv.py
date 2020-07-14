@@ -2,18 +2,17 @@ import os
 import itertools
 import tensorflow as tf
 import numpy as np
-import pandas as pd
 from glob import glob
 import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, Dropout, GlobalMaxPooling2D, MaxPooling2D, BatchNormalization, GlobalAveragePooling2D
+from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, Dropout, GlobalMaxPooling2D, MaxPooling2D, BatchNormalization
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import init_ops
 from sklearn.metrics import classification_report, confusion_matrix
-#from utils import plot_training_history
-#from utils import plot_confusion_matrix
-#from utils import MeanPerClassAccuracy
+from utils import plot_training_history
+from utils import plot_confusion_matrix
+from utils import MeanPerClassAccuracy
 from argparse import ArgumentParser
 
 
@@ -30,11 +29,17 @@ dataDir = os.path.join(mainDir,'data')
 train_path = os.path.join(dataDir, 'train')
 valid_path = os.path.join(dataDir, 'validation')
 
-             
+
+# Number of classes
+num_classes = len(glob(train_path+'/*'))
+print(num_classes)
+# Image size
+img_size = [32, 32]
+              
+
 # create instances of ImageDataGenerator for train and validation data
 
 if args.data_augm:
-    print("Data Augmentation")
     gen_train = ImageDataGenerator(rescale=1./255, 
                     brightness_range=[0.2,1.0], 
                     width_shift_range=0.1,
@@ -50,7 +55,6 @@ gen_valid = ImageDataGenerator(rescale=1./255)
 
 # create generators
 
-img_size = [32, 32]
 batch_size = 256
 
 train_generator = gen_train.flow_from_directory(
@@ -62,7 +66,6 @@ train_generator = gen_train.flow_from_directory(
 
 valid_generator = gen_valid.flow_from_directory(
   valid_path,
-  shuffle = False,
   target_size=img_size,
   batch_size=batch_size,
 )
@@ -70,39 +73,47 @@ valid_generator = gen_valid.flow_from_directory(
 
 # Model
 
-num_classes = len(glob(train_path+'/*')) 
-input_shape = img_size + [3]    
-base_model = tf.keras.applications.VGG16(input_shape = input_shape, include_top=False, weights=None)                                              
-x = Flatten()(base_model.output)
-#x = GlobalAveragePooling2D()(base_model.output) 
+input_shape = img_size + [3]
+
+i = Input(shape=input_shape)
+x = Conv2D(32, (3, 3), activation='relu', padding='same')(i)
+x = BatchNormalization()(x)
+x = Conv2D(32, (3, 3), activation='relu', padding='same')(x)
+x = BatchNormalization()(x)
+x = MaxPooling2D((2, 2))(x)
+# x = Dropout(0.2)(x)
+x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
+x = BatchNormalization()(x)
+x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
+x = BatchNormalization()(x)
+x = MaxPooling2D((2, 2))(x)
+# x = Dropout(0.2)(x)
+x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
+x = BatchNormalization()(x)
+x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
+x = BatchNormalization()(x)
+x = MaxPooling2D((2, 2))(x)
+# x = Dropout(0.2)(x)
+
+# x = GlobalMaxPooling2D()(x)
+x = Flatten()(x)
 x = Dropout(0.2)(x)
-x = Dense(512, activation='relu')(x)
+x = Dense(1024, activation='relu')(x)
 x = Dropout(0.2)(x)
 x = Dense(num_classes, activation='softmax')(x)
 
-model = Model(inputs=base_model.input, outputs=x)
+model = Model(i, x)
 
 # compile model
-
-model.compile(optimizer ='adam',
-              loss ='categorical_crossentropy',
-              metrics = ['accuracy']              
-)
-              
-'''
 model.compile(optimizer='adam',
               loss='categorical_crossentropy',
-              metrics=['accuracy', MeanPerClassAccuracy(num_classes)],              
-              #metrics=['accuracy', tf.keras.metrics.Recall(0), tf.keras.metrics.Recall(1)]
-              )
-'''
+              metrics=['accuracy'])
 
-# Fit model
+# create class_weght (imbalanced data: pay attention to underrepresented classes)
 
 no_train_images = len(glob(train_path + '/*/*.ppm'))
 no_valid_images = len(glob(valid_path + '/*/*.ppm'))
 
-# create class_weght (imbalanced data: pay attention to underrepresented classes)
        
 if args.class_weight:
     total = no_train_images 
@@ -116,10 +127,10 @@ if args.class_weight:
 else:
     class_weight = None              
 
-# fitting
+# fit model
 
-epochs = 0
-               
+epochs = 50
+
 r = model.fit(
   train_generator,
   validation_data=valid_generator,
@@ -129,24 +140,24 @@ r = model.fit(
   validation_steps = no_valid_images / batch_size
 )
 
-#save model
-
-model_name = 'vgg16_e100'
-#modelDir = '/home/natasa/share/trafficSigns/models'
-modelDir = '.'
-model.save(os.path.join(modelDir, model_name))
-
 # save model history
-
-import pandas as pd
-import os
 df  = pd.DataFrame(r.history)
-fname = "vgg16.csv"
+fname = "vgg6conv.csv"
 if os.path.exists(fname):
     df.to_csv(fname, index = False, mode = 'a', header = False)
 else:
     df.to_csv(fname, index = False)
     
+# save model
+model_name = 'vgg6conv_e50'
+#modelDir = '/home/natasa/share/trafficSigns/models'
+modelDir = '.'
+model.save(os.path.join(modelDir, model_name))
+
+
+#figDir = '/home/natasa/share/trafficSigns/figs'
+#plot_training_history(r, os.path.join(figDir, model_name))
+
 # Evaluation on the validation dataset
 
 test_path = valid_path
@@ -164,19 +175,6 @@ Y_pred = model.predict(test_generator, steps = no_test_images / batch_size, verb
 y_pred = np.argmax(Y_pred, axis=1)
 cm = confusion_matrix(test_generator.classes, y_pred)
 cr = classification_report(test_generator.classes, y_pred, digits = 4)
-
 print(cm)
 print(cr)
-
-'''
-r.history['loss']+=r1.history['loss']
-r.history['val_loss'] += r1.history['val_loss']
-r.history['accuracy'] += r1.history['accuracy']
-r.history['val_accuracy'] += r1.history['val_accuracy']
-
-r.history['mean_per_class_accuracy'] += r1.history['mean_per_class_accuracy']
-r.history['val_mean_per_class_accuracy'] += r1.history['val_mean_per_class_accuracy']
-
-'''
-
 
