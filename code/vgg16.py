@@ -118,7 +118,7 @@ else:
 
 # fitting
 
-epochs = 0
+epochs = 30
                
 r = model.fit(
   train_generator,
@@ -129,12 +129,6 @@ r = model.fit(
   validation_steps = no_valid_images / batch_size
 )
 
-#save model
-
-model_name = 'vgg16_e100'
-#modelDir = '/home/natasa/share/trafficSigns/models'
-modelDir = '.'
-model.save(os.path.join(modelDir, model_name))
 
 # save model history
 
@@ -146,6 +140,15 @@ if os.path.exists(fname):
     df.to_csv(fname, index = False, mode = 'a', header = False)
 else:
     df.to_csv(fname, index = False)
+    
+    
+#save model
+
+model_name = 'vgg16_e100'
+#modelDir = '/home/natasa/share/trafficSigns/models'
+modelDir = '.'
+model.save(os.path.join(modelDir, model_name))
+
     
 # Evaluation on the validation dataset
 
