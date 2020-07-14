@@ -2,17 +2,18 @@ import os
 import itertools
 import tensorflow as tf
 import numpy as np
+import pandas as pd
 from glob import glob
 import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, Dropout, GlobalMaxPooling2D, MaxPooling2D, BatchNormalization
+from tensorflow.keras.layers import Input, Conv2D, Dense, Flatten, Dropout, GlobalMaxPooling2D, MaxPooling2D, BatchNormalization, GlobalAveragePooling2D
 from tensorflow.keras.models import Model
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import init_ops
 from sklearn.metrics import classification_report, confusion_matrix
-from utils import plot_training_history
-from utils import plot_confusion_matrix
-from utils import MeanPerClassAccuracy
+#from utils import plot_training_history
+#from utils import plot_confusion_matrix
+#from utils import MeanPerClassAccuracy
 from argparse import ArgumentParser
 
 
@@ -24,22 +25,19 @@ args = parser.parse_args()
 args.class_weight = True
 args.data_augm = True
 
+model_name = 'vgg16'
 mainDir = '/home/natasa_sarafijanovic'
+#mainDir = '/home/natasa/share/trafficSigns/'
 dataDir = os.path.join(mainDir,'data')
 train_path = os.path.join(dataDir, 'train')
 valid_path = os.path.join(dataDir, 'validation')
 
-
-# Number of classes
-num_classes = len(glob(train_path+'/*'))
-print(num_classes)
-# Image size
-img_size = [32, 32]
-              
-
+             
 # create instances of ImageDataGenerator for train and validation data
 
 if args.data_augm:
+    print("Data Augmentation")
+    model_name += '_da'    
     gen_train = ImageDataGenerator(rescale=1./255, 
                     brightness_range=[0.2,1.0], 
                     width_shift_range=0.1,
@@ -55,6 +53,7 @@ gen_valid = ImageDataGenerator(rescale=1./255)
 
 # create generators
 
+img_size = [224, 224]  ### diff from 01_vgg16.py
 batch_size = 256
 
 train_generator = gen_train.flow_from_directory(
@@ -66,6 +65,7 @@ train_generator = gen_train.flow_from_directory(
 
 valid_generator = gen_valid.flow_from_directory(
   valid_path,
+  shuffle = False,
   target_size=img_size,
   batch_size=batch_size,
 )
@@ -73,49 +73,37 @@ valid_generator = gen_valid.flow_from_directory(
 
 # Model
 
-input_shape = img_size + [3]
+num_classes = len(glob(train_path+'/*')) 
+input_shape = img_size + [3]    
+base_model = tf.keras.applications.VGG16(input_shape = input_shape, include_top=False, weights="imagenet") ### diff from 01_vgg16.py
 
-i = Input(shape=input_shape)
-x = Conv2D(32, (3, 3), activation='relu', padding='same')(i)
-x = BatchNormalization()(x)
-x = Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-x = BatchNormalization()(x)
-x = MaxPooling2D((2, 2))(x)
-# x = Dropout(0.2)(x)
-x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-x = BatchNormalization()(x)
-x = Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-x = BatchNormalization()(x)
-x = MaxPooling2D((2, 2))(x)
-# x = Dropout(0.2)(x)
-x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-x = BatchNormalization()(x)
-x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-x = BatchNormalization()(x)
-x = MaxPooling2D((2, 2))(x)
-# x = Dropout(0.2)(x)
-
-# x = GlobalMaxPooling2D()(x)
-x = Flatten()(x)
+base_model.trainable = False  ### diff from 01_vgg16.py                                             
+x = Flatten()(base_model.output)
+#x = GlobalAveragePooling2D()(base_model.output) 
 x = Dropout(0.2)(x)
-x = Dense(1024, activation='relu')(x)
+x = Dense(512, activation='relu')(x)
 x = Dropout(0.2)(x)
 x = Dense(num_classes, activation='softmax')(x)
 
-model = Model(i, x)
+model = Model(inputs=base_model.input, outputs=x)
 
 # compile model
-model.compile(optimizer='adam',
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
 
-# create class_weght (imbalanced data: pay attention to underrepresented classes)
+model.compile(optimizer ='adam',
+              loss ='categorical_crossentropy',
+              metrics = ['accuracy']              
+)
+              
+
+# Fit model
 
 no_train_images = len(glob(train_path + '/*/*.ppm'))
 no_valid_images = len(glob(valid_path + '/*/*.ppm'))
 
+# create class_weght (imbalanced data: pay attention to underrepresented classes)
        
 if args.class_weight:
+    model_name += '_cw'
     total = no_train_images 
     class_weight =  dict()
     for i in range(num_classes):
@@ -127,10 +115,10 @@ if args.class_weight:
 else:
     class_weight = None              
 
-# fit model
+# fitting
 
-epochs = 50
-
+epochs = 10
+               
 r = model.fit(
   train_generator,
   validation_data=valid_generator,
@@ -142,14 +130,14 @@ r = model.fit(
 
 # save model history
 df  = pd.DataFrame(r.history)
-fname = "vgg6conv.csv"
+fname = "vgg16_tl.csv"
 if os.path.exists(fname):
     df.to_csv(fname, index = False, mode = 'a', header = False)
 else:
     df.to_csv(fname, index = False)
     
 # save model
-model_name = 'vgg6conv_e50'
+model_name = 'vgg16_tl_e100'
 #modelDir = '/home/natasa/share/trafficSigns/models'
 modelDir = '.'
 model.save(os.path.join(modelDir, model_name))
@@ -174,7 +162,7 @@ Y_pred = model.predict(test_generator, steps = no_test_images / batch_size, verb
 
 y_pred = np.argmax(Y_pred, axis=1)
 cm = confusion_matrix(test_generator.classes, y_pred)
-cr = classification_report(test_generator.classes, y_pred, digits = 4)
+cr = classification_report(test_generator.classes, y_pred, digits = 4, labels = list(range(num_classes)))
 print(cm)
 print(cr)
 
